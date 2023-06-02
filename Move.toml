@@ -1,0 +1,12 @@
+[package]
+name = 'bingo'
+version = '1.0.0'
+
+[dependencies.AptosFramework]
+git = 'https://github.com/aptos-labs/aptos-core.git'
+rev = 'aptos-release-v1.4'
+subdir = 'aptos-move/framework/aptos-framework'
+
+[addresses]
+overmind = "0x1337"
+admin = "0x1337"

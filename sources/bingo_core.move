@@ -92,14 +92,26 @@ module overmind::bingo_core {
     */
     public entry fun init(admin: &signer) {
         // TODO: Assert that the signer is the admin
-
+        assert_admin(signer::address_of(admin));
+        
         // TODO: Create a bingo resource account
-
+        let (resource_signer, resource_signer_cap) = account::create_resource_account(admin, b"BINGO");
+        
         // TODO: Register the resource account with AptosCoin
-
+        coin::register<AptosCoin>(&resource_signer);
+        
         // TODO: Move State resource to the admin's address
-
+        move_to<State>(admin, State {
+            bingo : signer::address_of(&resource_signer)
+        });
+        
         // TODO: Move Bingo resource to the resource account's address
+        move_to<Bingo>(&resource_signer, Bingo {
+            games: simple_map::create(),
+            cap: resource_signer_cap,
+            create_game_events: account::new_event_handle<CreateGameEvent>(&resource_signer),
+            cancel_game_events: account::new_event_handle<CancelGameEvent>(&resource_signer)
+        });
     }
 
     /*
@@ -116,16 +128,34 @@ module overmind::bingo_core {
         start_timestamp: u64
     ) acquires State, Bingo {
         // TODO: Assert that start timestamp is valid
-
+        assert_start_timestamp_is_valid(start_timestamp);
+        
         // TODO: Assert that bingo is initialized
-
+        assert_bingo_initialized(signer::address_of(admin));
+        let state = borrow_global<State>(signer::address_of(admin));
+        let bingo = borrow_global_mut<Bingo>((state.bingo));
+        
         // TODO: Assert that the game name is not taken
-
+        assert_game_name_not_taken(&bingo.games, &game_name);
+        
         // TODO: Create a new Game instance
+        let game = Game {
+            players: simple_map::create(),
+            entry_fee: entry_fee,
+            start_timestamp: start_timestamp,
+            drawn_numbers: vector::empty(),
+            is_finished: false,
+            insert_number_events: account::new_event_handle<InsertNumberEvent>(admin),
+            join_game_events: account::new_event_handle<JoinGameEvent>(admin),
+            bingo_events: account::new_event_handle<BingoEvent>(admin)
+        };
 
         // TODO: Add the game to the bingo's game list
-
+        simple_map::add(&mut bingo.games, game_name, game);
+        
         // TODO: Emit CreateGameEvent event
+        let createGameEvent = bingo_events::new_create_game_event(game_name, entry_fee, start_timestamp, timestamp::now_seconds());
+        event::emit_event<CreateGameEvent>(&mut bingo.create_game_events, createGameEvent);
     }
 
     /*
@@ -136,18 +166,29 @@ module overmind::bingo_core {
     */
     public entry fun insert_number(admin: &signer, game_name: String, number: u8) acquires State, Bingo {
         // TODO: Assert that the drawn number is valid
-
+        assert_inserted_number_is_valid(number);
+        
         // TODO: Assert that bingo is initialized
-
+        assert_bingo_initialized(signer::address_of(admin));
+        let state = borrow_global<State>(signer::address_of(admin));
+        let bingo = borrow_global_mut<Bingo>(state.bingo);
+        
         // TODO: Assert that the game exists
-
+        assert_game_exists(&bingo.games, &game_name);
+        
         // TODO: Assert that the game already started
-
+        let game = simple_map::borrow_mut(&mut bingo.games, &game_name);
+        assert_game_already_stared(game.start_timestamp);
+        
         // TODO: Assert that the drawn number is not a duplicate
-
+        assert_number_not_duplicated(&game.drawn_numbers, &number);
+        
         // TODO: Add the drawn number to game's drawn numbers
-
+        vector::push_back(&mut game.drawn_numbers, number);
+        
         // TODO: Emit InsertNumberEvent event
+        let insertNumberEvent = bingo_events::new_inser_number_event(game_name, number, timestamp::now_seconds());
+        event::emit_event<InsertNumberEvent>(&mut game.insert_number_events, insertNumberEvent);
     }
 
     /*
@@ -159,24 +200,37 @@ module overmind::bingo_core {
     */
     public entry fun join_game(player: &signer, game_name: String, numbers: vector<vector<u8>>) acquires State, Bingo {
         // TODO: Assert that bingo is initialized
+        assert_bingo_initialized(@admin);
+        let state = borrow_global<State>(@admin);
 
+        assert_correct_amount_of_picked_numbers(&numbers);
+        
         // TODO: Assert that amount of picked numbers is correct
-
-        // TODO: Assert that the numbers are picked in correct way
-
+        assert_numbers_are_picked_correctly(&numbers);
+        
         // TODO: Assert that the game exists
-
+        let bingo = borrow_global_mut<Bingo>(state.bingo);
+        assert_game_exists(&bingo.games, &game_name);
+        
         // TODO: Assert that the game has not started yet
-
+        let game = simple_map::borrow_mut(&mut bingo.games, &game_name);
+        assert_game_not_started(game.start_timestamp);
+        
         // TODO: Assert that the player has enough APT to join the game
-
+        assert_suffiecient_funds_to_join(signer::address_of(player), game.entry_fee);
+        
         // TODO: Assert that the player has not joined the game yet
-
+        assert_player_not_joined_yet(&game.players, &signer::address_of(player));
+        
         // TODO: Add the player to the game's list of players
-
+        simple_map::add(&mut game.players, signer::address_of(player), numbers);
+        
         // TODO: Transfer entry fee from the player to the bingo PDA
-
+        coin::transfer<AptosCoin>(player, state.bingo, game.entry_fee);
+        
         // TODO: Emit JoinGameEvent event
+        let joinGameEvent = bingo_events::new_join_game_event(game_name, signer::address_of(player), numbers, timestamp::now_seconds());
+        event::emit_event<JoinGameEvent>(&mut game.join_game_events, joinGameEvent);
     }
 
     /*
@@ -186,20 +240,34 @@ module overmind::bingo_core {
     */
     public entry fun bingo(player: &signer, game_name: String) acquires State, Bingo {
         // TODO: Assert that bingo is initialized
-
+        assert_bingo_initialized(@admin);
+        let state = borrow_global<State>(@admin);
+        
         // TODO: Assert that the game exists
-
+        let bingo = borrow_global_mut<Bingo>(state.bingo);
+        assert_game_exists(&bingo.games, &game_name);
+        
         // TODO: Assert that the game has not ended yet
-
+        let game = simple_map::borrow_mut(&mut bingo.games, &game_name);
+        assert_game_not_finished(game.is_finished);
+        
         // TODO: Assert that the player joined the game
-
+        assert_player_joined(&game.players, &signer::address_of(player));
+        
         // TODO: Assert that the player has bingo
-
+        let numbers = simple_map::borrow(&game.players, &signer::address_of(player));
+        assert_player_has_bingo(&game.drawn_numbers, *numbers);
+        
         // TODO: Change the game's is_finished field's value to true
-
+        game.is_finished = true;
+        
         // TODO: Transfer all players' entry fees to the winner
-
+        let resource_account = account::create_signer_with_capability(&bingo.cap);
+        coin::transfer<AptosCoin>(&resource_account, signer::address_of(player), game.entry_fee * simple_map::length(&game.players));
+        
         // TODO: Emit BingoEvent event
+        let bingoEvent = bingo_events::new_bingo_event(game_name, signer::address_of(player), timestamp::now_seconds());
+        event::emit_event<BingoEvent>(&mut game.bingo_events, bingoEvent);
     }
 
     /*
@@ -209,16 +277,35 @@ module overmind::bingo_core {
     */
     public entry fun cancel_game(admin: &signer, game_name: String) acquires State, Bingo {
         // TODO: Assert that bingo is initialized
-
+        assert_bingo_initialized(signer::address_of(admin));
+        
         // TODO: Assert that the game exists
-
+        let state = borrow_global<State>(signer::address_of(admin));
+        let bingo = borrow_global_mut<Bingo>(state.bingo);
+        assert_game_exists(&bingo.games, &game_name);
+        
         // TODO: Assert that the game has not finished yet
-
+        let game = simple_map::borrow_mut(&mut bingo.games, &game_name);
+        assert_game_not_finished(game.is_finished);
+        
         // TODO: Change the game's is_finished field's value to true
-
+        game.is_finished = true;
+        
         // TODO: Transfer the players' entry fees back to them
-
+        let numplayers = simple_map::length(&game.players);
+        let (addresses, _) = simple_map::to_vec_pair(game.players);
+        let idx = 0;
+        let resource_account = account::create_signer_with_capability(&bingo.cap);
+               
+        while (idx < numplayers) {
+            let playeraddr = vector::borrow(&addresses, idx);
+            coin::transfer<AptosCoin>(&resource_account, *playeraddr, game.entry_fee);
+            idx = idx + 1;
+        };
+        
         // TODO: Emit CancelGameEvent event
+        let cancelGameEvent = bingo_events::new_cance_game_event(game_name, timestamp::now_seconds());
+        event::emit_event(&mut bingo.cancel_game_events, cancelGameEvent);
     }
 
     /*
@@ -232,8 +319,46 @@ module overmind::bingo_core {
         //      1) If a number matches any number in the drawn numbers, then replace it with Option::None
         //      2) If a number is 0, then replace it with Option::None
         //      3) If a number does not match any number in the drawn numbers, then replace it with Option::Some
-
+        let result = vector::empty<vector<Option<u8>>>();
+        let colidx = 0;
+        while (colidx < 5) {
+            let colnumbers = vector::borrow_mut(&mut player_numbers, colidx);
+            let rowidx = 0;
+            let resrow = vector::empty<Option<u8>>();
+            while (rowidx < 5) {
+                let number = vector::borrow_mut(colnumbers, rowidx);
+                let drawns = vector::length(drawn_numbers);
+                let drawnidx = 0;
+                let match = false;
+                while (drawnidx < drawns) {
+                    let drawn = vector::borrow(drawn_numbers, drawnidx);
+                    if (*number == *drawn) {
+                        match = true;
+                        break
+                    }; 
+                    drawnidx = drawnidx + 1;
+                };
+                if (match == true || *number == 0) {
+                    vector::push_back(&mut resrow, option::none());
+                } else {
+                    vector::push_back(&mut resrow, option::some(1));
+                };
+                rowidx = rowidx + 1;
+            };
+            vector::push_back(&mut result, resrow);
+            colidx = colidx + 1;
+        };
         // TODO: Call check_columns, check_diagonals and check_rows and return true if any of those returns true
+        let ret = false;
+        if (check_columns(&mut result)) {
+            ret = true;
+        } else if (check_rows(&mut result)) {
+            ret = true;
+        } else if (check_diagonals(&mut result)) {
+            ret = true;
+        };
+
+        ret
     }
 
     /*
@@ -241,8 +366,31 @@ module overmind::bingo_core {
         @param player_numbers - numbers picked by the player
         @returns - true if player has bingo in any column, otherwise false
     */
-    inline fun check_columns(player_numbers: &vector<vector<Option<u8>>>): bool {
+    inline fun check_columns(player_numbers: &mut vector<vector<Option<u8>>>): bool {
         // TODO: Return true if any column consists of Option::None only
+        let ret = false;
+        
+        // let col_cnt = vector::length(player_numbers);
+        let col_idx = 0; 
+        while (col_idx < 5) {
+            let row_nums = vector::borrow_mut(player_numbers, col_idx);
+            let row_idx = 0;
+            let ok = true;
+            while (row_idx < 5) {
+                let number = vector::borrow(row_nums, row_idx);
+                if (*number != option::none()) {
+                    ok = false;
+                    break
+                };
+                row_idx = row_idx + 1;
+            };
+            if (ok == true) {
+                ret = true;
+                break
+            };
+            col_idx = col_idx + 1;
+        };
+        ret
     }
 
     /*
@@ -252,6 +400,31 @@ module overmind::bingo_core {
     */
     inline fun check_rows(player_numbers: &vector<vector<Option<u8>>>): bool {
         // TODO: Return true if any row consists of Option::None only
+        let row_nums = vector::borrow(player_numbers, 0);
+        let row_cnt = vector::length(row_nums);
+        // let col_cnt = vector::length(player_numbers);
+        let row_idx = 0;
+        let ret = false;
+
+        while (row_idx < row_cnt) {
+            let col_idx = 0;
+            let ok = true;
+            while (col_idx < 5) {
+                let colnums = vector::borrow(player_numbers, col_idx);
+                let num = vector::borrow(colnums, row_idx);
+                if (*num != option::none()) {
+                    ok = false;
+                    break
+                };
+                col_idx = col_idx + 1;
+            }; 
+            if (ok == true) {
+                ret = true;
+                break
+            };  
+            row_idx = row_idx + 1;
+        };
+        ret
     }
 
     /*
@@ -261,6 +434,26 @@ module overmind::bingo_core {
     */
     inline fun check_diagonals(player_numbers: &vector<vector<Option<u8>>>): bool {
         // TODO: Return true if any diagonal consists of Option::None only
+        // let 5 = vector::length(player_numbers);
+        let col_idx = 0;
+        let ok = true;
+        let ok1 = true;
+        while (col_idx < 5) {
+            let colnums = vector::borrow(player_numbers, col_idx);
+            let num = vector::borrow(colnums, col_idx);
+            let num1 = vector::borrow(colnums, 4 - col_idx);
+            if (*num != option::none()) {
+                ok = false;
+            };
+            
+            if (*num1 != option::none()) {
+                ok1 = false;
+            };
+
+            col_idx = col_idx + 1;
+        };
+
+        ok || ok1
     }
 
     /////////////
@@ -269,38 +462,59 @@ module overmind::bingo_core {
 
     inline fun assert_admin(admin: address) {
         // TODO: Assert that the provided address is the admin address
+        assert!(@admin == admin, SIGNER_NOT_ADMIN);
     }
 
     inline fun assert_start_timestamp_is_valid(start_timestamp: u64) {
         // TODO: Assert that provided start timestamp is greater than current timestamp
+        assert!(start_timestamp > timestamp::now_seconds(), INVALID_START_TIMESTAMP);
     }
 
     inline fun assert_bingo_initialized(admin: address) acquires State {
         // TODO: Assert that the admin has State resource and bingo PDA has Bingo resource
+        assert!(exists<State>(admin), BINGO_NOT_INITIALIZED);
+        let state = borrow_global<State>(admin);
+        assert!(exists<Bingo>(state.bingo), BINGO_NOT_INITIALIZED);
     }
 
     inline fun assert_game_name_not_taken(games: &SimpleMap<String, Game>, game_name: &String) {
         // TODO: Assert that the games list does not contain the provided game name
+        // let state = borrow_global<State>(admin);
+        // let bingo = borrow_global<Bingo>(state.bingo);
+
+        assert!(!simple_map::contains_key(games, game_name), GAME_NAME_TAKEN);
     }
 
     inline fun assert_inserted_number_is_valid(number: u8) {
         // TODO: Assert that the number is in a range <1;75>
+        assert!(number >= 1 && number <= 75, INVALID_NUMBER);
     }
 
     inline fun assert_game_exists(games: &SimpleMap<String, Game>, game_name: &String) {
         // TODO: Assert that the games list contains the provided game name
+        assert!(simple_map::contains_key(games, game_name), GAME_DOES_NOT_EXIST);
     }
 
     inline fun assert_game_already_stared(start_timestamp: u64) {
         // TODO: Assert that the provided start timestamp is smaller or equals current timestamp
+        assert!(start_timestamp <= timestamp::now_seconds(), GAME_NOT_STARTED_YET);
     }
 
     inline fun assert_number_not_duplicated(numbers: &vector<u8>, number: &u8) {
         // TODO: Assert that the numbers vector does not contains the provided number
+        assert!(!vector::contains(numbers, number), NUMBER_DUPLICATED);
     }
 
     inline fun assert_correct_amount_of_picked_numbers(picked_numbers: &vector<vector<u8>>) {
-        // TODO: Assert that the picked numbers is a 2D vector 5x5
+        // TODO: Assert that the picked numbers is a 2D vector 5x5     
+        let picklen = vector::length(picked_numbers);
+        assert!(picklen == 5, INVALID_AMOUNT_OF_COLUMNS_IN_PICKED_NUMBERS);
+        let idx = 0;
+        while (idx < picklen) {
+            let number = vector::borrow(picked_numbers, idx);
+            assert!(vector::length(number) == 5, INVALID_AMOUNT_OF_NUMBERS_IN_COLUMN);
+            idx = idx + 1;
+        };
     }
 
     inline fun assert_numbers_are_picked_correctly(picked_numbers: &vector<vector<u8>>) {
@@ -311,30 +525,56 @@ module overmind::bingo_core {
         //      4) The fourth column must consist of numbers from a range of <46; 60>
         //      5) The fifth column must consist of numbers from a range of <61; 75>
         //      6) The middle number of the third column must be 0
+        let picklen = vector::length(picked_numbers);
+        let idx = 0;
+        while (idx < picklen) {
+            let number = vector::borrow<vector<u8>>(picked_numbers, idx);
+            let len = vector::length(number);
+            let idx1 = 0;
+            while (idx1 < len) {
+                let num = vector::borrow<u8>(number, idx1);
+                if ((idx == 2) && (idx1 == 2)) {
+                    assert!(*num == 0, COLUMN_HAS_INVALID_NUMBER);
+                }
+                else {
+                    let start = 15 * idx;
+                    let end = 15 * (idx + 1) + 1;
+                    assert!((*num > (start as u8)) && (*num < (end as u8)), COLUMN_HAS_INVALID_NUMBER);
+                };
+                idx1 = idx1 + 1;
+            };
+            idx = idx + 1;
+        };
     }
 
     inline fun assert_game_not_started(start_timestamp: u64) {
         // TODO: Assert that the start timestamp is greater that the current timestamp
+        assert!(start_timestamp > timestamp::now_seconds(), GAME_ALREADY_STARTED);
     }
 
     inline fun assert_suffiecient_funds_to_join(player: address, entry_fee: u64) {
         // TODO: Assert that the player has enough APT coins to participate in a game
+        assert!(coin::balance<AptosCoin>((player)) >= entry_fee, INSUFFICIENT_FUNDS);
     }
 
     inline fun assert_player_not_joined_yet(players: &SimpleMap<address, vector<vector<u8>>>, player: &address) {
         // TODO: Assert that the players list does not contain the player's address
+        assert!(!simple_map::contains_key(players, player), PLAYER_ALREADY_JOINED);
     }
 
     inline fun assert_game_not_finished(is_finished: bool) {
         // TODO: Assert that the game has not ended yet
+        assert!(!is_finished, GAME_HAS_ENDED);
     }
 
     inline fun assert_player_joined(players: &SimpleMap<address, vector<vector<u8>>>, player: &address) {
         // TODO: Assert that the players list contains the player's address
+        assert!(simple_map::contains_key(players, player), PLAYER_NOT_JOINED);
     }
 
     inline fun assert_player_has_bingo(drawn_numbers: &vector<u8>, player_numbers: vector<vector<u8>>) {
         // TODO: Assert that the player has bingo by comparing their numbers with the drawn ones
+        assert!(check_player_numbers(drawn_numbers, player_numbers), PLAYER_HAVE_NOT_WON);
     }
 
     ///////////
@@ -1238,7 +1478,7 @@ module overmind::bingo_core {
             vector[option::some(46), option::some(51), option::some(49), option::some(50), option::some(52)],
             vector[option::some(63), option::some(61), option::some(70), option::some(74), option::some(75)],
         ];
-        assert!(check_columns(&first_column), 0);
+        assert!(check_columns(&mut first_column), 0);
 
         let second_column = vector[
             vector[option::some(1), option::some(12), option::some(4), option::some(8), option::some(11)],
@@ -1247,7 +1487,7 @@ module overmind::bingo_core {
             vector[option::some(46), option::some(51), option::some(49), option::some(50), option::some(52)],
             vector[option::some(63), option::some(61), option::some(70), option::some(74), option::some(75)],
         ];
-        assert!(check_columns(&second_column), 1);
+        assert!(check_columns(&mut second_column), 1);
 
         let third_column = vector[
             vector[option::some(1), option::some(12), option::some(4), option::some(8), option::some(11)],
@@ -1256,7 +1496,7 @@ module overmind::bingo_core {
             vector[option::some(46), option::some(51), option::some(49), option::some(50), option::some(52)],
             vector[option::some(63), option::some(61), option::some(70), option::some(74), option::some(75)],
         ];
-        assert!(check_columns(&third_column), 2);
+        assert!(check_columns(&mut third_column), 2);
 
         let fourth_column = vector[
             vector[option::some(1), option::some(12), option::some(4), option::some(8), option::some(11)],
@@ -1265,7 +1505,7 @@ module overmind::bingo_core {
             vector[option::none(), option::none(), option::none(), option::none(), option::none()],
             vector[option::some(63), option::some(61), option::some(70), option::some(74), option::some(75)],
         ];
-        assert!(check_columns(&fourth_column), 3);
+        assert!(check_columns(&mut fourth_column), 3);
 
         let fifth_column = vector[
             vector[option::some(1), option::some(12), option::some(4), option::some(8), option::some(11)],
@@ -1274,7 +1514,7 @@ module overmind::bingo_core {
             vector[option::some(46), option::some(51), option::some(49), option::some(50), option::some(52)],
             vector[option::none(), option::none(), option::none(), option::none(), option::none()],
         ];
-        assert!(check_columns(&fifth_column), 4);
+        assert!(check_columns(&mut fifth_column), 4);
 
         let numbers_random_pattern = vector[
             vector[option::some(11), option::some(12), option::some(4), option::some(8), option::none()],
@@ -1283,7 +1523,7 @@ module overmind::bingo_core {
             vector[option::some(46), option::none(), option::some(49), option::some(51), option::some(52)],
             vector[option::some(71), option::some(61), option::none(), option::some(74), option::some(63)],
         ];
-        assert!(!check_columns(&numbers_random_pattern), 5);
+        assert!(!check_columns(&mut numbers_random_pattern), 5);
 
         let all_numbers = vector[
             vector[option::some(1), option::some(12), option::some(4), option::some(8), option::some(11)],
@@ -1292,7 +1532,7 @@ module overmind::bingo_core {
             vector[option::some(46), option::some(51), option::some(49), option::some(50), option::some(52)],
             vector[option::some(63), option::some(61), option::some(70), option::some(74), option::some(75)],
         ];
-        assert!(!check_columns(&all_numbers), 6);
+        assert!(!check_columns(&mut all_numbers), 6);
     }
 
     #[test]
